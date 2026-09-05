@@ -4,6 +4,7 @@ Hermes Web UI -- HTTP helper functions.
 import base64 as _base64
 import binascii as _binascii
 import functools
+import ipaddress as _ipaddress
 import json as _json
 import logging
 import os
@@ -88,10 +89,20 @@ _CSP_EXTRA_FRAME_RE = _re.compile(
 # ASCII alphanumerics with internal hyphens, single dots between labels, no empty
 # label — and the port is ASCII [0-9] only, because ``\d`` also matches Unicode
 # digits (e.g. Arabic-Indic), which no browser parses as a port.
+#
+# A bracketed IPv6 literal (http://[::1]:3000) is accepted as an alternative host
+# form: the motivating case is a local dashboard embedding the WebUI, and on an
+# IPv6 loopback the operator has no other way to name it. The brackets only get
+# it past the shape check — the address inside is parsed with ``ipaddress`` in
+# _valid_csp_frame_ancestor_source, so "[:::1]" or "[192.168.1.1]" still fall back
+# to lockdown. No ``*.`` prefix: a wildcard label has no meaning for a literal.
 _CSP_ANCESTOR_HOST = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 _CSP_FRAME_ANCESTOR_RE = _re.compile(
-    r"^https?://(?:\*\.)?"
-    rf"{_CSP_ANCESTOR_HOST}(?:\.{_CSP_ANCESTOR_HOST})*"
+    r"^https?://"
+    r"(?:"
+    rf"(?:\*\.)?{_CSP_ANCESTOR_HOST}(?:\.{_CSP_ANCESTOR_HOST})*"
+    r"|(?P<ipv6>\[[0-9A-Fa-f:.]+\])"
+    r")"
     r"(?::(?P<port>[0-9]{1,5}|\*))?$"
 )
 _CSP_HEADER_NAME = 'Content-Security-Policy'
@@ -160,6 +171,12 @@ def _valid_csp_frame_ancestor_source(source: str) -> bool:
     match = _CSP_FRAME_ANCESTOR_RE.fullmatch(source)
     if not match:
         return False
+    ipv6 = match.group("ipv6")
+    if ipv6:
+        try:
+            _ipaddress.IPv6Address(ipv6[1:-1])
+        except ValueError:
+            return False
     port = match.group("port")
     if not port or port == "*":
         return True

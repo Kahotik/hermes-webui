@@ -347,19 +347,50 @@ class TestMalformedAncestorsFallBackToLockdown:
             assert _valid_csp_frame_ancestor_source(value), value
 
 
-def test_bracketed_ipv6_origin_is_not_supported(monkeypatch):
-    """Documents a known limit: only hostnames and IPv4 literals are supported.
+def test_csp_frame_ancestors_accepts_ipv6_loopback(monkeypatch):
+    """An IPv6-only loopback deployment can name the embedding origin.
 
-    A bracketed IPv6 origin falls back to lockdown instead of being allowed,
-    which is the safe direction. `.env.example` states the limit so an operator
-    does not silently lose framing they thought they had configured.
+    The motivating case is a local dashboard embedding the WebUI; on an IPv6
+    loopback `http://[::1]:3000` is the only way to write it, and rejecting it
+    left the operator with a silently ignored allowlist.
     """
     from api import helpers
     from api.helpers import _valid_csp_frame_ancestor_source
 
-    assert not _valid_csp_frame_ancestor_source("http://[::1]:3000")
+    for value in (
+        "http://[::1]:3000",
+        "http://[::1]",
+        "https://[2001:db8::1]:8443",
+    ):
+        assert _valid_csp_frame_ancestor_source(value), value
 
     monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_ANCESTORS", "http://[::1]:3000")
+    rec = _Recorder()
+    helpers._security_headers(rec)
+    assert "frame-ancestors http://[::1]:3000; " in rec.value_of("Content-Security-Policy")
+    assert rec.value_of("X-Frame-Options") is None
+
+
+def test_csp_frame_ancestors_rejects_malformed_ipv6(monkeypatch):
+    """The brackets get past the shape check; the address itself still has to parse.
+
+    Without the ``ipaddress`` check a bracketed blob of hex and colons would be
+    accepted, X-Frame-Options would be dropped, and the embed would come down to
+    whatever each browser makes of it.
+    """
+    from api import helpers
+    from api.helpers import _valid_csp_frame_ancestor_source
+
+    for value in (
+        "http://[:::1]:3000",
+        "http://[12345::1]",
+        "http://[192.168.1.1]",
+        "http://[]",
+        "http://[::1]:99999",
+    ):
+        assert not _valid_csp_frame_ancestor_source(value), value
+
+    monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_ANCESTORS", "http://[:::1]:3000")
     rec = _Recorder()
     helpers._security_headers(rec)
     assert "frame-ancestors 'none'; " in rec.value_of("Content-Security-Policy")
