@@ -178,8 +178,14 @@ def _valid_csp_frame_ancestor_source(source: str) -> bool:
         except ValueError:
             return False
     port = match.group("port")
-    if not port or port == "*":
+    if not port:
         return True
+    if port == "*":
+        # A wildcard port stays available for hostname sources, but not on a
+        # bracketed literal: accepting it would omit X-Frame-Options for a value
+        # browsers do not honour on an IPv6 source, leaving the embed broken with
+        # the fallback protection already dropped.
+        return ipv6 is None
     return 1 <= int(port) <= 65535
 
 

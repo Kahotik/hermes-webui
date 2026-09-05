@@ -390,6 +390,27 @@ def test_csp_frame_ancestors_rejects_malformed_ipv6(monkeypatch):
     ):
         assert not _valid_csp_frame_ancestor_source(value), value
 
+
+def test_csp_frame_ancestors_rejects_wildcard_port_on_ipv6(monkeypatch):
+    """A wildcard port is fine on a hostname, not on a bracketed literal.
+
+    Accepting `http://[::1]:*` would omit X-Frame-Options for a value browsers do
+    not honour on an IPv6 source: the embed stays broken and the fallback
+    protection is gone, which is the accepted-but-unusable case this validator
+    exists to avoid.
+    """
+    from api import helpers
+    from api.helpers import _valid_csp_frame_ancestor_source
+
+    assert _valid_csp_frame_ancestor_source("http://localhost:*")
+    assert not _valid_csp_frame_ancestor_source("http://[::1]:*")
+
+    monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_ANCESTORS", "http://[::1]:*")
+    rec = _Recorder()
+    helpers._security_headers(rec)
+    assert "frame-ancestors 'none'; " in rec.value_of("Content-Security-Policy")
+    assert rec.value_of("X-Frame-Options") == "DENY"
+
     monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_ANCESTORS", "http://[:::1]:3000")
     rec = _Recorder()
     helpers._security_headers(rec)
